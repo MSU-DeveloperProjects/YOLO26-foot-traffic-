@@ -116,7 +116,7 @@ private:
 //  Returns boxes in the same coordinate space as the input frame
 // ─────────────────────────────────────────
 vector<Rect> runYOLO(ov::InferRequest& request,
-                     const Mat& frame,
+                     const Mat& cropped,
                      float conf_threshold)
 {
     Mat blob;
@@ -308,10 +308,10 @@ int main()
         // Adjust these once you can see the video feed to align with your doorway.
         // OUT: person crosses area2 → area1
         // IN:  person crosses area1 → area2
-        vector<Point> area1 = {Point(245,170), Point(400,170),
-                                Point(400,190), Point(245,190)};
-        vector<Point> area2 = {Point(245,200), Point(400,200),
-                                Point(400,220), Point(245,220)};
+        vector<Point> area1 = {Point(245,290), Point(400,290),
+                                Point(400,270), Point(245,270)};
+        vector<Point> area2 = {Point(245,335), Point(400,335),
+                                Point(400,315), Point(245,315)};
 
         map<int, Point> going_out, going_in;
         vector<int>     counter_out, counter_in;
@@ -340,7 +340,8 @@ int main()
 
             Mat infer_frame;
             resize(raw, infer_frame, Size(640, 640));                 // square for YOLO
-
+            Rect ROI(251,147,440,356)
+            Mat cropped = process_frame(ROI).clone();
             total_frames++;
             bool run_detection = (total_frames % DETECT_EVERY_N == 0);
 
