@@ -340,7 +340,7 @@ int main()
 
             Mat infer_frame;
             resize(raw, infer_frame, Size(640, 640));                 // square for YOLO
-            Rect ROI(251,147,440,356);
+            Rect ROI(251, 147, 189, 209);
             Mat cropped = process_frame(ROI).clone();
             total_frames++;
             bool run_detection = (total_frames % DETECT_EVERY_N == 0);
