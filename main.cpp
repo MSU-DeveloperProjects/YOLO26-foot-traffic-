@@ -22,7 +22,7 @@ using namespace std;
 // ─────────────────────────────────────────
 //  Config
 // ─────────────────────────────────────────
-const bool  HEADLESS_MODE  = true; // Set to true to disable window & drawing
+const bool  HEADLESS_MODE  = false; // Set to true to disable window & drawing
 const float  INPUT_WIDTH      = 640.0f;
 const float  INPUT_HEIGHT     = 640.0f;
 const float  CONF_THRESHOLD   = 0.10f;
@@ -308,10 +308,15 @@ int main()
         // Adjust these once you can see the video feed to align with your doorway.
         // OUT: person crosses area2 → area1
         // IN:  person crosses area1 → area2
-        vector<Point> area1 = {Point(245,290), Point(400,290),
-                                Point(400,270), Point(245,270)};
-        vector<Point> area2 = {Point(245,335), Point(400,335),
-                                Point(400,315), Point(245,315)};
+        vector<Point> area1 = {
+            Point(20, 90), Point(170, 90),
+            Point(170, 110), Point(20, 110)
+        };
+        
+        vector<Point> area2 = {
+            Point(20, 125), Point(170, 125),
+            Point(170, 145), Point(20, 145)
+        };
 
         map<int, Point> going_out, going_in;
         vector<int>     counter_out, counter_in;
