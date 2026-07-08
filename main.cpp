@@ -30,8 +30,8 @@ const int    DETECT_EVERY_N   = 4;
 const string MODEL_ONNX       = "yolo26s.onnx";
 
 // Display resolution — 16:9, kept separate from inference size
-const int DISPLAY_W = 1280;
-const int DISPLAY_H = 640;
+const int DISPLAY_W = 640;
+const int DISPLAY_H = 320;
 
 // ─────────────────────────────────────────
 //  Draw text with background box
@@ -313,7 +313,7 @@ int main()
             Point(50, 83),    // top-left
             Point(188, 60),   // top-right
             Point(188, 120),  // bottom-right
-            Point(63, 145)     // bottom-left
+            Point(50, 145)     // bottom-left
         };
         
         // area2 = BOX A: inside lobby side
