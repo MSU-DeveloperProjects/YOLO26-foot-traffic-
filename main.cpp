@@ -116,7 +116,7 @@ private:
 //  Returns boxes in the same coordinate space as the input frame
 // ─────────────────────────────────────────
 vector<Rect> runYOLO(ov::InferRequest& request,
-                     const Mat& cropped,
+                     const Mat& frame,
                      float conf_threshold)
 {
     Mat blob;
@@ -347,7 +347,7 @@ int main()
 
             if (run_detection) {
                 // runYOLO returns boxes in 640x640 space
-                last_detected = runYOLO(infer_req, infer_frame, CONF_THRESHOLD);
+                last_detected = runYOLO(infer_req, cropped, CONF_THRESHOLD); //change infer_frame to cropped frame
 
                 // FIX: scale boxes from 640x640 inference space → 640x360 display space
                 // x scale = 640/640 = 1.0 (no change needed)
