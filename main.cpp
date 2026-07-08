@@ -336,12 +336,23 @@ int main()
             // FIX: separate display frame (640x360) and inference frame (640x640)
             // Passing a 640x360 frame to a 640x640 model squishes people vertically
             // and destroys detection accuracy
-            resize(raw, process_frame, Size(DISPLAY_W, DISPLAY_H));  // for UI
+           resize(raw, process_frame, Size(DISPLAY_W, DISPLAY_H));  // full 640x360 frame
 
-            Mat infer_frame;
-            resize(raw, infer_frame, Size(640, 640));                 // square for YOLO
+      resize(raw, process_frame, Size(DISPLAY_W, DISPLAY_H));  // full 640x360 frame
+
             Rect ROI(251, 147, 189, 209);
-            Mat cropped = process_frame(ROI).clone();
+            
+            // safety check: keep ROI inside frame
+            ROI = ROI & Rect(0, 0, process_frame.cols, process_frame.rows);
+            
+            if (ROI.width <= 0 || ROI.height <= 0) {
+                cerr << "Invalid ROI. Frame size: "
+                     << process_frame.cols << "x" << process_frame.rows << endl;
+                continue;
+            }
+            
+            // From this point on, process_frame means cropped doorway frame
+            process_frame = process_frame(ROI).clone();
             total_frames++;
             bool run_detection = (total_frames % DETECT_EVERY_N == 0);
 
