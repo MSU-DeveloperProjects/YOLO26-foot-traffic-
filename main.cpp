@@ -336,13 +336,11 @@ int main()
             // FIX: separate display frame (640x360) and inference frame (640x640)
             // Passing a 640x360 frame to a 640x640 model squishes people vertically
             // and destroys detection accuracy
-           resize(raw, process_frame, Size(DISPLAY_W, DISPLAY_H));  // full 640x360 frame
-
-      resize(raw, process_frame, Size(DISPLAY_W, DISPLAY_H));  // full 640x360 frame
+            resize(raw, process_frame, Size(DISPLAY_W, DISPLAY_H));  // full 640x360 frame
 
             Rect ROI(251, 147, 189, 209);
             
-            // safety check: keep ROI inside frame
+            // safety check
             ROI = ROI & Rect(0, 0, process_frame.cols, process_frame.rows);
             
             if (ROI.width <= 0 || ROI.height <= 0) {
@@ -351,23 +349,14 @@ int main()
                 continue;
             }
             
-            // From this point on, process_frame means cropped doorway frame
+            // from here, process_frame is the cropped doorway frame
             process_frame = process_frame(ROI).clone();
+            
             total_frames++;
             bool run_detection = (total_frames % DETECT_EVERY_N == 0);
-
+            
             if (run_detection) {
-                // runYOLO returns boxes in 640x640 space
-                last_detected = runYOLO(infer_req, process_frame, CONF_THRESHOLD); //change infer_frame to cropped frame
-
-                // FIX: scale boxes from 640x640 inference space → 640x360 display space
-                // x scale = 640/640 = 1.0 (no change needed)
-                // y scale = 360/640 = 0.5625
-                const float scale_y = (float)DISPLAY_H / 640.0f;
-                for (auto& r : last_detected) {
-                    r.y      = (int)(r.y      * scale_y);
-                    r.height = (int)(r.height * scale_y);
-                }
+                last_detected = runYOLO(infer_req, process_frame, CONF_THRESHOLD);
             }
 
             // Tracker runs every frame — interpolates positions between detections
