@@ -308,14 +308,20 @@ int main()
         // Adjust these once you can see the video feed to align with your doorway.
         // OUT: person crosses area2 → area1
         // IN:  person crosses area1 → area2
+        // area1 = BOX B: door / outside side
         vector<Point> area1 = {
-            Point(20, 90), Point(170, 90),
-            Point(170, 110), Point(20, 110)
+            Point(25, 75),    // top-left
+            Point(188, 60),   // top-right
+            Point(188, 120),  // bottom-right
+            Point(0, 145)     // bottom-left
         };
         
+        // area2 = BOX A: inside lobby side
         vector<Point> area2 = {
-            Point(20, 125), Point(170, 125),
-            Point(170, 145), Point(20, 145)
+            Point(0, 150),    // top-left
+            Point(188, 125),  // top-right
+            Point(188, 208),  // bottom-right
+            Point(0, 208)     // bottom-left
         };
 
         map<int, Point> going_out, going_in;
