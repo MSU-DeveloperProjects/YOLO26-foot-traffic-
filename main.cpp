@@ -337,7 +337,7 @@ int main()
         
         // area2 = BOX A: inside lobby side
         vector<Point> area2 = {
-            Point(0, 155),    // top-left
+            Point(0, 175),    // top-left
             Point(155, 192),  // top-right
             Point(188, 208),  // bottom-right
             Point(0, 208)     // bottom-left
