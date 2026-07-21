@@ -329,16 +329,16 @@ int main()
         // IN:  person crosses area1 → area2
         // area1 = BOX B: door / outside side
         vector<Point> area1 = {
-            Point(46, 154),    // bottom-left
-            Point(165, 144),   // bottom-right
+            Point(46, 170),    // bottom-left
+            Point(165, 192),   // bottom-right
             Point(174, 109),  // top-right
             Point(46, 134)     // top-left
         };
         
         // area2 = BOX A: inside lobby side
         vector<Point> area2 = {
-            Point(0, 160),    // top-left
-            Point(188, 144),  // top-right
+            Point(0, 155),    // top-left
+            Point(155, 192),  // top-right
             Point(188, 208),  // bottom-right
             Point(0, 208)     // bottom-left
         };
