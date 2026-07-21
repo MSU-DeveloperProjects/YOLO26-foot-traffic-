@@ -13,6 +13,9 @@
 #include <atomic>
 #include <cstring>
 #include <iomanip>
+#include <unordered_map>
+#include <unordered_set>
+#include <sstream>
 #pragma warning(disable : 4996) // Prevents MSVC from complaining about localtime
 #include <fstream>
 #include <ctime>
@@ -22,11 +25,12 @@ using namespace std;
 // ─────────────────────────────────────────
 //  Config
 // ─────────────────────────────────────────
-const bool  HEADLESS_MODE  = true; // Set to true to disable window & drawing
+const bool  HEADLESS_MODE  = false; // Set to true to disable window & drawing
 const float  INPUT_WIDTH      = 640.0f;
 const float  INPUT_HEIGHT     = 640.0f;
-const float  CONF_THRESHOLD   = 0.10f;
-const int    DETECT_EVERY_N   = 4;
+const float  CONF_THRESHOLD   = 0.05f;  // lower threshold: feed weak detections into tracker
+const float  NMS_THRESHOLD    = 0.45f;  // suppress duplicate YOLO boxes
+const int    DETECT_EVERY_N   = 1;     // accuracy test mode: run YOLO every frame
 const string MODEL_ONNX       = "yolo26s.onnx";
 
 // Display resolution — 16:9, kept separate from inference size
@@ -115,9 +119,9 @@ private:
 //  Expects a square frame (INPUT_WIDTH x INPUT_HEIGHT)
 //  Returns boxes in the same coordinate space as the input frame
 // ─────────────────────────────────────────
-vector<Rect> runYOLO(ov::InferRequest& request,
-                     const Mat& cropped,
-                     float conf_threshold)
+vector<Detection> runYOLO(ov::InferRequest& request,
+                          const Mat& frame,
+                          float conf_threshold)
 {
     Mat blob;
     dnn::blobFromImage(frame, blob, 1.0 / 255.0,
@@ -177,8 +181,10 @@ vector<Rect> runYOLO(ov::InferRequest& request,
     float x_factor = (float)frame.cols / INPUT_WIDTH;
     float y_factor = (float)frame.rows / INPUT_HEIGHT;
 
-    vector<Rect> detections;
-    detections.reserve(32);
+    vector<Rect> boxes;
+    vector<float> scores;
+    boxes.reserve(32);
+    scores.reserve(32);
 
     for (size_t i = 0; i < num_det; ++i) {
         const float* row = data + i * row_size;
@@ -198,8 +204,19 @@ vector<Rect> runYOLO(ov::InferRequest& request,
         iw   = min(iw, frame.cols - left);
         ih   = min(ih, frame.rows - top);
 
-        if (iw > 0 && ih > 0)
-            detections.emplace_back(left, top, iw, ih);
+        if (iw > 0 && ih > 0) {
+            boxes.emplace_back(left, top, iw, ih);
+            scores.push_back(conf);
+        }
+    }
+
+    vector<int> indices;
+    dnn::NMSBoxes(boxes, scores, conf_threshold, NMS_THRESHOLD, indices);
+
+    vector<Detection> detections;
+    detections.reserve(indices.size());
+    for (int idx : indices) {
+        detections.push_back({boxes[idx], scores[idx], 0});
     }
 
     return detections;
@@ -297,24 +314,42 @@ int main()
         cout << "Stream connected." << endl;
 
         // ── Create display window upfront ─────
-        namedWindow("people_counter", WINDOW_NORMAL);
-        resizeWindow("people_counter", DISPLAY_W, DISPLAY_H);
-        moveWindow("people_counter", 100, 100);
+        if (!HEADLESS_MODE) {
+            namedWindow("people_counter", WINDOW_NORMAL);
+            resizeWindow("people_counter", DISPLAY_W, DISPLAY_H);
+            moveWindow("people_counter", 100, 100);
+        }
 
-        ::Tracker tracker;
+        ::Tracker tracker(0.20f, 50.0, 12, 1);
 
         // ── Counting zones ────────────────────
         // Vertical strip regions on the 640x360 display frame.
         // Adjust these once you can see the video feed to align with your doorway.
         // OUT: person crosses area2 → area1
         // IN:  person crosses area1 → area2
-        vector<Point> area1 = {Point(245,290), Point(400,290),
-                                Point(400,270), Point(245,270)};
-        vector<Point> area2 = {Point(245,335), Point(400,335),
-                                Point(400,315), Point(245,315)};
+        // area1 = BOX B: door / outside side
+        vector<Point> area1 = {
+            Point(46, 154),    // bottom-left
+            Point(165, 144),   // bottom-right
+            Point(174, 109),  // top-right
+            Point(46, 134)     // top-left
+        };
+        
+        // area2 = BOX A: inside lobby side
+        vector<Point> area2 = {
+            Point(0, 160),    // top-left
+            Point(188, 144),  // top-right
+            Point(188, 208),  // bottom-right
+            Point(0, 208)     // bottom-left
+        };
 
-        map<int, Point> going_out, going_in;
-        vector<int>     counter_out, counter_in;
+        // Direction state per tracked person.
+        // first_zone[id] = 1 means the person first touched area1.
+        // first_zone[id] = 2 means the person first touched area2.
+        unordered_map<int, int> first_zone;
+        unordered_set<int> counted_ids;
+        int counter_out = 0;
+        int counter_in  = 0;
 
         Mat    process_frame;
         auto   start_time   = chrono::high_resolution_clock::now();
@@ -322,8 +357,8 @@ int main()
         int    total_frames = 0;
         double fps          = 0.0;
 
-        vector<Rect>        last_detected;
-        vector<vector<int>> objects_bbs_ids;
+        vector<Detection>   last_detected;
+        vector<TrackResult> objects_bbs_ids;
 
         while (true)
         {
@@ -336,81 +371,111 @@ int main()
             // FIX: separate display frame (640x360) and inference frame (640x640)
             // Passing a 640x360 frame to a 640x640 model squishes people vertically
             // and destroys detection accuracy
-            resize(raw, process_frame, Size(DISPLAY_W, DISPLAY_H));  // for UI
+            resize(raw, process_frame, Size(DISPLAY_W, DISPLAY_H));  // full 640x360 frame
 
-            Mat infer_frame;
-            resize(raw, infer_frame, Size(640, 640));                 // square for YOLO
-            Rect ROI(251,147,440,356);
-            Mat cropped = process_frame(ROI).clone();
+            Rect ROI(251, 147, 189, 209);
+            
+            // safety check
+            ROI = ROI & Rect(0, 0, process_frame.cols, process_frame.rows);
+            
+            if (ROI.width <= 0 || ROI.height <= 0) {
+                cerr << "Invalid ROI. Frame size: "
+                     << process_frame.cols << "x" << process_frame.rows << endl;
+                continue;
+            }
+            
+            // from here, process_frame is the cropped doorway frame
+            process_frame = process_frame(ROI).clone();
+            
             total_frames++;
             bool run_detection = (total_frames % DETECT_EVERY_N == 0);
-
+            
             if (run_detection) {
-                // runYOLO returns boxes in 640x640 space
-                last_detected = runYOLO(infer_req, infer_frame, CONF_THRESHOLD);
-
-                // FIX: scale boxes from 640x640 inference space → 640x360 display space
-                // x scale = 640/640 = 1.0 (no change needed)
-                // y scale = 360/640 = 0.5625
-                const float scale_y = (float)DISPLAY_H / 640.0f;
-                for (auto& r : last_detected) {
-                    r.y      = (int)(r.y      * scale_y);
-                    r.height = (int)(r.height * scale_y);
-                }
+                last_detected = runYOLO(infer_req, process_frame, CONF_THRESHOLD);
             }
 
             // Tracker runs every frame — interpolates positions between detections
             objects_bbs_ids = tracker.update(last_detected);
-            // Debug: yellow boxes = raw detections
-            // for (const auto& r : last_detected)
-            //     rectangle(process_frame, r, Scalar(0,255,255), 2);
-            // putText(process_frame, "Raw: " + to_string(last_detected.size()),
-            //         Point(20,200), FONT_HERSHEY_COMPLEX, 0.6, Scalar(0,255,255), 2);
+            // Debug: yellow boxes = raw YOLO detections before tracking
+            if (!HEADLESS_MODE) {
+                for (const auto& det : last_detected) {
+                    const Rect& r = det.box;
+                    rectangle(process_frame, r, Scalar(0,255,255), 1);
+
+                    ostringstream label;
+                    label << fixed << setprecision(2) << det.confidence;
+                    putText(process_frame, label.str(), Point(r.x, max(0, r.y - 4)),
+                            FONT_HERSHEY_COMPLEX, 0.35, Scalar(0,255,255), 1);
+                }
+                putText(process_frame, "Raw: " + to_string(last_detected.size()),
+                        Point(20,200), FONT_HERSHEY_COMPLEX, 0.5, Scalar(0,255,255), 1);
+            }
             // ── Tracking & counting ───────────
-            for (const auto& bbox : objects_bbs_ids)
+            for (const auto& tr : objects_bbs_ids)
             {
-                int x1     = bbox[0], y1 = bbox[1];
-                int x2     = bbox[0] + bbox[2];
-                int y2     = bbox[1] + bbox[3];
-                int obj_id = bbox[4];
-                Point br(x2, y2);  // bottom-right corner used for zone test
+                int x1     = tr.box.x;
+                int y1     = tr.box.y;
+                int x2     = tr.box.x + tr.box.width;
+                int y2     = tr.box.y + tr.box.height;
+                int obj_id = tr.id;
 
-                // OUT: seen in area2 first, then crosses into area1
-                if (pointPolygonTest(area2, br, false) >= 0)
-                    going_out[obj_id] = br;
+                // Critical: count by bottom-center / foot point, not bottom-right.
+                Point track_point((x1 + x2) / 2, y2);
 
-                if (going_out.count(obj_id) && pointPolygonTest(area1, br, false) >= 0) {
-                    if (!HEADLESS_MODE) {
-                        circle(process_frame, br, 4, Scalar(0,255,0), -1);
-                        rectangle(process_frame, Point(x1,y1), Point(x2,y2), Scalar(255,255,255), 2);
-                        putTextRect(process_frame, to_string(obj_id), Point(x1,y1), 1, 1, Scalar(0,0,0), Scalar(255,255,255));
-                    }
-                    
-                    if (find(counter_out.begin(), counter_out.end(), obj_id) == counter_out.end()) {
-                        counter_out.push_back(obj_id);
-                        // LOG THE EVENT!
-                        logTraffic("OUT", counter_in.size(), counter_out.size());
-                        if (HEADLESS_MODE) cout << "[LOG] Person walked OUT. Total Out: " << counter_out.size() << endl;
-                    }
+                bool inArea1 = pointPolygonTest(area1, track_point, false) >= 0;
+                bool inArea2 = pointPolygonTest(area2, track_point, false) >= 0;
+
+                if (!HEADLESS_MODE) {
+                    // White box = tracked person. Purple dot = exact counting point.
+                    rectangle(process_frame, Point(x1,y1), Point(x2,y2), Scalar(255,255,255), 1);
+                    circle(process_frame, track_point, 4, Scalar(255,0,255), -1);
+
+                    ostringstream label;
+                    label << "ID " << obj_id << " " << fixed << setprecision(2) << tr.confidence;
+                    putTextRect(process_frame, label.str(), Point(x1, max(12, y1)),
+                                0.45, 1, Scalar(0,0,0), Scalar(255,255,255));
                 }
 
-                // IN: seen in area1 first, then crosses into area2
-                if (pointPolygonTest(area1, br, false) >= 0)
-                    going_in[obj_id] = br;
+                // Already counted this person ID once, so do not let one person
+                // become both IN and OUT.
+                if (counted_ids.count(obj_id)) continue;
 
-                if (going_in.count(obj_id) && pointPolygonTest(area2, br, false) >= 0) {
-                    if (!HEADLESS_MODE) {
-                        circle(process_frame, br, 4, Scalar(0,255,0), -1);
-                        rectangle(process_frame, Point(x1,y1), Point(x2,y2), Scalar(255,0,0), 2);
-                        putTextRect(process_frame, to_string(obj_id), Point(x1,y1), 1, 1, Scalar(255,255,255), Scalar(255,0,0));
-                    }
+                // If zones overlap or the point lands in both at once, skip this
+                // frame. This prevents the classic "one person increments both" bug.
+                if (inArea1 && inArea2) continue;
 
-                    if (find(counter_in.begin(), counter_in.end(), obj_id) == counter_in.end()) {
-                        counter_in.push_back(obj_id);
-                        // LOG THE EVENT!
-                        logTraffic("IN", counter_in.size(), counter_out.size());
-                        if (HEADLESS_MODE) cout << "[LOG] Person walked IN. Total In: " << counter_in.size() << endl;
-                    }
+                int current_zone = 0;
+                if (inArea1) current_zone = 1;
+                else if (inArea2) current_zone = 2;
+
+                // Not inside either zone yet.
+                if (current_zone == 0) continue;
+
+                // First zone touched by this person.
+                if (!first_zone.count(obj_id)) {
+                    first_zone[obj_id] = current_zone;
+                    continue;
+                }
+
+                // Still in the same zone; no completed direction yet.
+                if (first_zone[obj_id] == current_zone) continue;
+
+                // Current project logic:
+                // area1 -> area2 = IN
+                // area2 -> area1 = OUT
+                if (first_zone[obj_id] == 1 && current_zone == 2) {
+                    counter_in++;
+                    counted_ids.insert(obj_id);
+                    first_zone.erase(obj_id);
+                    logTraffic("IN", counter_in, counter_out);
+                    if (HEADLESS_MODE) cout << "[LOG] Person walked IN. Total In: " << counter_in << endl;
+                }
+                else if (first_zone[obj_id] == 2 && current_zone == 1) {
+                    counter_out++;
+                    counted_ids.insert(obj_id);
+                    first_zone.erase(obj_id);
+                    logTraffic("OUT", counter_in, counter_out);
+                    if (HEADLESS_MODE) cout << "[LOG] Person walked OUT. Total Out: " << counter_out << endl;
                 }
             }
 
@@ -426,9 +491,9 @@ int main()
 
             // ── Draw UI ───────────────────────
             if (!HEADLESS_MODE) {
-                putText(process_frame, "In:  " + to_string(counter_in.size()),
+                putText(process_frame, "In:  " + to_string(counter_in),
                         Point(20,50),  FONT_HERSHEY_COMPLEX, 0.8, Scalar(0,255,0), 2);
-                putText(process_frame, "Out: " + to_string(counter_out.size()),
+                putText(process_frame, "Out: " + to_string(counter_out),
                         Point(20,90),  FONT_HERSHEY_COMPLEX, 0.8, Scalar(0,0,255), 2);
 
                 char fps_str[20];
@@ -442,7 +507,9 @@ int main()
                 polylines(process_frame, area1, true, Scalar(0,255,0), 2);
                 polylines(process_frame, area2, true, Scalar(0,255,0), 2);
 
-                imshow("people_counter", process_frame);
+                Mat show_frame;
+                resize(process_frame, show_frame, Size(DISPLAY_W, DISPLAY_H));
+                imshow("people_counter", show_frame);
                 if (waitKey(1) == 27) break;  // ESC to quit
             }
         }
